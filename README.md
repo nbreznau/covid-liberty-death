@@ -6,6 +6,7 @@
 The data used in the blog post:
 
 |Indicator|Source|
+|-----|--------|
 | COVID-19 Deaths | [Johns Hopkins Tracker](https://github.com/CSSEGISandData/COVID-19) |
 | COVID-19 Infections | Author's own calculations (see [01_Data_Prep.Rmd](/code/01_Data_Prep.Rmd)) |
 | Government Intervention | [Oxford Blavatnik School of Government](https://www.bsg.ox.ac.uk/research/research-projects/covid-19-government-response-tracker) |
