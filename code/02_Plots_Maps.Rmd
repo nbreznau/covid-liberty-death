@@ -1,0 +1,357 @@
+---
+title: "Visualizations"
+author: "Nate Breznau"
+date: "5/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load("tidyverse", "countrycode", "zoo", "ggplot2", 
+               "rnaturalearth", "sf", "ragg", "ggpubr")
+```
+
+
+### Load Data
+
+Data files were worked up from raw data in the folder "data/data_prep_routines".
+
+```{r files, warning = F, message = F}
+
+covid <- readRDS(here::here("data","covid.RDS"))
+
+```
+
+### Maps
+
+#### Prep Map
+
+```{r map_prep}
+death_map <- ne_countries(returnclass = "sf") %>%
+  st_transform("+proj=eqearth") %>%
+  mutate(iso3c = iso_a3) %>%
+  subset(iso3c != "ATA", select = c(iso3c, geometry))
+
+covid_map <- covid %>%
+  subset(day == "2021-06-02") %>%
+  mutate(deaths_pc = ifelse(deaths_pc < .02, .02, deaths_pc), # adjust to make log scale cleaner
+         deaths = ifelse(deaths < 36, 36, deaths)) %>%
+  select(iso3c, deaths_pc, deaths, hours_lost)
+
+death_map <- left_join(death_map, covid_map, by = c("iso3c"))
+```
+
+#### Deaths per 10k 02-June
+
+```{r map_deaths_pc}
+
+agg_png(filename = here::here("results","deaths_02_june.png"), width = 1000, height = 800, res = 144)
+death_map %>%
+  ggplot(aes(fill = log(deaths_pc))) +
+  geom_sf(size = 0.15, colour = "black") +
+  scale_fill_continuous(limits = range(log(death_map$deaths_pc)),
+                        breaks = c(-3.3,-1.8,-0.3,1.2,2.7),
+                        labels = c("0.04","0.2","0.7","3.3","15"),
+                        type = "viridis",
+                        direction = -1,
+                        guide = guide_colourbar(
+                          ),
+                        na.value = "white") +
+  lims(x = c(-10100000,14000000)) +
+  coord_sf(label_axes = "----") +
+  labs(fill = NULL,
+       title = "Deaths from COVID-19 by June 2nd/2021, per 10k Inhabitants",
+       caption = "Note: Johns Hopkins Tracker data, logged color scale") +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.key.width = unit(2, "line"))
+dev.off()
+
+knitr::include_graphics(here::here("results","deaths_02_june.png"))
+```
+
+#### Deaths Total 05-May
+
+```{r map_deaths_total}
+
+agg_png(filename = here::here("results","total_deaths_05_may.png"), width = 1000, height = 800, res = 144)
+death_map %>%
+  ggplot(aes(fill = log(deaths))) +
+  geom_sf(size = 0.15, colour = "black") +
+  scale_fill_continuous(limits = range(log(death_map$deaths)),
+                        breaks = c(5,7,9,11,13),
+                        labels = c("150","1k","8k","60k","450k"),
+                        type = "viridis",
+                        direction = -1,
+                        guide = guide_colourbar(#label.position = "top",
+                                                #barwidth = 10, barheight = .5,
+                                                #ticks.linwidth = 1
+                          ),
+                        na.value = "white") +
+  lims(x = c(-10100000,14000000)) +
+  coord_sf(label_axes = "----") +
+  labs(fill = NULL,
+       title = "Deaths from COVID-19",
+       caption = "Note: Johns Hopkins Tracker data, logged color scale") +
+  theme_classic() +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.key.width = unit(2, "line"))
+dev.off()
+
+knitr::include_graphics(here::here("results","total_deaths_05_may.png"))
+```
+
+
+### Government Intervention by Country
+
+#### Germany
+
+```{r int_by_country}
+deu <- covid %>%
+  subset(iso3c == "DEU") %>%
+  arrange(day) %>%
+  group_by(iso3c) %>%
+  mutate(lockdown = zoo::rollmean((GovernmentResponseIndex/50)-1, k = 4, fill = NA),
+         deaths = zoo::rollmean((deaths_day_6roll/pop)*100000, k = 7, fill = NA)) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = day, y = lockdown), size = 0.8, color = "#29AF7FFF") +
+  geom_line(aes(x = day, y = deaths), size = 0.6, linetype = "dashed", color = "#453781FF") +
+  annotate(geom = "text", x = as.Date("2020-01-01"), y = 1.2, label = "Germany", hjust = 0, color = "black") +
+  scale_x_date(date_label = "%b-%y", breaks = waiver(), date_breaks = "2 months") +
+  ylab(" \n ") +
+  ylim(-1,1.3) +
+  theme_classic() +
+  theme(
+  axis.title.x = element_blank(),
+  axis.text.y = element_text(colour = "grey50"),
+  axis.line = element_line(colour = "grey50"),
+  axis.text.x = element_blank(),
+  )
+  
+```
+
+#### Sweden
+
+```{r int_by_country1}
+swe <- covid %>%
+  subset(iso3c == "SWE") %>%
+  arrange(day) %>%
+  group_by(iso3c) %>%
+  mutate(lockdown = zoo::rollmean((GovernmentResponseIndex/50)-1, k = 4, fill = NA),
+         deaths = zoo::rollmean((deaths_day_6roll/pop)*100000, k = 7, fill = NA)) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = day, y = lockdown), size = 0.8, color = "#29AF7FFF") +
+  geom_line(aes(x = day, y = deaths), size = 0.6, linetype = "dashed", color = "#453781FF") +
+  annotate(geom = "text", x = as.Date("2020-01-01"), y = 1.2, label = "Sweden", hjust = 0, color = "black") +
+  annotate(geom = "text", x = as.Date("2020-07-01"), y = 0.85, label = "deaths per 100k", size = 3, color = "#453781FF") +
+  annotate(geom = "text", x = as.Date("2020-03-20"), y = -0.5, label = "government", size = 3, color = "#29AF7FFF", hjust = 0) +
+    annotate(geom = "text", x = as.Date("2020-03-20"), y = -0.75, label = "response", size = 3, color = "#29AF7FFF", hjust = 0) +
+  scale_x_date(date_label = "%b-%y", breaks = waiver(), date_breaks = "2 months") +
+  ylab(" \n ") +
+  ylim(-1,1.3) +
+  theme_classic() +
+  theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_text(colour = "grey50"),
+  axis.text.y = element_text(colour = "grey50"),
+  axis.text.x = element_blank(),
+  axis.line = element_line(colour = "grey50")
+  )
+  
+```
+
+#### S. Korea
+
+```{r int_by_country2}
+kor <- covid %>%
+  subset(iso3c == "KOR") %>%
+  arrange(day) %>%
+  group_by(iso3c) %>%
+  mutate(lockdown = zoo::rollmean((GovernmentResponseIndex/50)-1, k = 4, fill = NA),
+         deaths = zoo::rollmean((deaths_day_6roll/pop)*100000, k = 7, fill = NA)) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = day, y = lockdown), size = 0.8, color = "#29AF7FFF") +
+  geom_line(aes(x = day, y = deaths), size = 0.6, linetype = "dashed", color = "#453781FF") +
+  annotate(geom = "text", x = as.Date("2020-01-01"), y = 1.2, label = "South Korea", hjust = 0, color = "black") +
+  scale_x_date(date_label = "%b-%y", breaks = waiver(), date_breaks = "2 months") +
+  ylab(" \n ") +
+  ylim(-1,1.3) +
+  theme_classic() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.text = element_text(colour = "grey50"),
+    axis.line = element_line(colour = "grey50")
+  )
+  
+```
+#### Combine
+
+```{r int_comb}
+agg_png(filename = here::here("results","blog_three_country.png"), res = 144, height = 600, width = 800)
+ggarrange(deu, swe, kor, ncol = 1, nrow = 3, heights = c(1,1,1.1))
+dev.off()
+
+knitr::include_graphics(here::here("results","blog_three_country.png"))
+```
+
+
+### Infection Change & Government Intervention
+
+```{r plot4}
+agg_png(filename = here::here("results","germany_gov_infect.png"), width = 1200, height = 750, res = 144)
+covid %>%
+  subset(iso3c %in% c("DEU"), select = c(iso3c, day, infection_week_delta, StringencyIndex, GovernmentResponseIndex)) %>%
+  arrange(day) %>%
+  mutate(lockdown = zoo::rollmean((StringencyIndex/50)-1, k = 4, fill = NA),
+         infect = zoo::rollmean(infection_week_delta, k = 7, fill = NA)) %>%
+  ggplot() +
+  geom_line(aes(x = day, y = infect), color = "#29AF7FFF", size = 1) +
+  geom_line(aes(x = day, y = lockdown), color = "#453781FF", size = 1, linetype = "dashed") +
+  annotate(geom = "text", x = as.Date("2020-01-25"), y = -0.15, label = "INFECTION RATE\n(weekly change/10k)", color = "#29AF7FFF", size = 3.5) +
+  annotate(geom = "text", x = as.Date("2020-04-09"), y = 0.7, label = "GOVERNMENT\nINTERVENTION", color = "#453781FF", size = 3.5) +
+  scale_x_date(date_label = "%b-%y", breaks = waiver(), date_breaks = "2 months") +
+    labs(caption = "Sources: Johns Hopkins & Oxford/Blavatnik Government Response Trackers") +
+  theme_classic() +
+    theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+dev.off()
+
+knitr::include_graphics(here::here("results","germany_gov_infect.png"))
+```
+
+
+### Infection Change & Government Intervention & Pandemic Sentiment GERMANY
+
+```{r plot4}
+agg_png(filename = here::here("results","germany_sent_infect.png"), width = 1200, height = 380, res = 144)
+covid %>%
+  subset(iso3c %in% c("DEU"), select = c(iso3c, day, infection_week_delta, cases_week_delta, StringencyIndex, sent, GovernmentResponseIndex)) %>%
+  arrange(day) %>%
+  mutate(lockdown = zoo::rollmean((StringencyIndex/50)-1, k = 4, fill = NA),
+         #infection_week_delta = ifelse(day > as.Date("2021-05-01") & is.na(infection_week_delta), cases_week_delta, infection_week_delta),
+         infect = zoo::rollmean(infection_week_delta, k = 7, fill = NA),
+         sent = zoo::rollmean((sent/50)+0.1, k = 17, fill = NA),
+         sent = ifelse(day < as.Date("2020-04-02"), NA, sent)) %>%
+  ggplot() +
+  geom_line(aes(x = day, y = infect), color = "#453781FF", size = 1, linetype = "dashed") +
+  geom_line(aes(x = day, y = lockdown), color = "#29AF7FFF", size = 0.8) +
+  geom_line(aes(x = day, y = sent), color = "#B8DE29FF", size = 1.2) +
+  annotate(geom = "text", x = as.Date("2020-01-25"), y = -0.2, label = "INFECTION RATE\n(weekly change)", color = "#453781FF", size = 3.5) +
+  annotate(geom = "text", x = as.Date("2020-06-13"), y = 0.65, label = "GOVERNMENT\nINTERVENTION", color = "#29AF7FFF", size = 3.5) +
+  annotate(geom = "text", x = as.Date("2020-06-05"), y = -0.8, label = "MEDIA SENTIMENT", color = "#B8DE29FF", size = 3.5) +
+  annotate(geom = "text", x = as.Date("2020-01-01"), y = 0.9, label = "Germany", color = "black", size = 5, hjust = 0) +
+  scale_x_date(date_label = "%b-%y", breaks = waiver(), date_breaks = "2 months") +
+  theme_classic() +
+    ylim(-0.99,0.99) +
+    theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+dev.off()
+
+knitr::include_graphics(here::here("results","germany_sent_infect.png"))
+```
+
+### Infection Change & Government Intervention & Pandemic Sentiment USA
+
+```{r plot6}
+agg_png(filename = here::here("results","usa_gov_infect.png"), width = 1200, height = 450, res = 144)
+covid %>%
+  subset(iso3c %in% c("USA"), select = c(iso3c, day, infection_week_delta, cases_week_delta, StringencyIndex, sent, GovernmentResponseIndex)) %>%
+  arrange(day) %>%
+  mutate(lockdown = zoo::rollmean((StringencyIndex/50)-1, k = 4, fill = NA),
+         infect = zoo::rollmean(infection_week_delta, k = 7, fill = NA),
+         sent = zoo::rollmean(sent/50, k = 14, fill = NA),
+         sent = ifelse(day < as.Date("2020-04-02"), NA, sent)) %>%
+  ggplot() +
+  geom_line(aes(x = day, y = infect), color = "#453781FF", size = 1, linetype = "dashed") +
+  geom_line(aes(x = day, y = lockdown), color = "#29AF7FFF", size = 0.8) +
+  geom_line(aes(x = day, y = sent), color = "#B8DE29FF", size = 1.3) +
+  annotate(geom = "text", x = as.Date("2020-01-25"), y = -0.2, label = "INFECTION RATE\n(weekly change)", color = "#453781FF", size = 3.5) +
+  annotate(geom = "text", x = as.Date("2020-06-20"), y = 0.65, label = "GOVERNMENT\nINTERVENTION", color = "#29AF7FFF", size = 3.5) +
+  annotate(geom = "text", x = as.Date("2020-06-05"), y = -0.65, label = "MEDIA SENTIMENT", color = "#B8DE29FF", size = 3.5) +
+  annotate(geom = "rect", xmin = as.Date("2020-01-01"), ymin = 0.8, xmax = as.Date("2020-04-05"), ymax = 0.97, fill = "white") +
+  annotate(geom = "text", x = as.Date("2020-01-01"), y = 0.9, label = "United States", color = "black", size = 5, hjust = 0) +
+
+  scale_x_date(date_label = "%b-%y", breaks = waiver(), date_breaks = "2 months") +
+    labs(caption = "Sources: Johns Hopkins, Oxford/Blavatnik & RavenPack") +
+  theme_classic() +
+  coord_cartesian(ylim = c(-0.99,0.99)) +
+    theme(
+    legend.position = "none",
+    legend.title = element_blank(),
+    axis.text.x = element_text(angle = 45, vjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank()
+  )
+dev.off()
+
+knitr::include_graphics(here::here("results","usa_gov_infect.png"))
+```
+
+
+### Behaviors
+
+#### Testing Association of Sentiment and Behaviors
+
+```{r plot_sent1}
+agg_png(filename = here::here("results","sent1_risk_behave.png"), width = 700, height = 500, res = 144)
+covid %>%
+  mutate(behave_3roll_prefill = scale(behave_3roll_prefill),
+         sent = scale(zoo::rollmean(lag(sent, 3), k = 5, fill = NA))) %>%
+  ggplot() +
+  xlim(-1.5,1.15) +
+  ylim(-1.5,1.5) +
+  geom_point(aes(x = sent, y = behave_3roll_prefill), color = "#453781FF") +
+  geom_smooth(aes(x = sent, y = behave_3roll_prefill), method = "lm", se = T, color = "#453781FF") +
+  stat_cor(aes(x = sent, y = behave_3roll_prefill), method = "pearson", label.x = 0.5, label.y = 0.85, color = "#453781FF", hjust = 0, p.accuracy = 0.001) +
+  annotate(geom = "text", x = 0.5, y = 1.07, label = "Correlation", color = "#453781FF", hjust = 0) +
+  xlab("Media Sentiment") +
+  ylab("Precautionary Behaviors") +
+  labs(caption = "Sources: RavenPack, Fetzer et al 2020") +
+  theme_classic()
+dev.off()
+
+knitr::include_graphics(here::here("results","sent1_risk_behave.png"))
+```
+
+#### Testing Association of Sentiment and Gov Intervention
+
+```{r plot6}
+agg_png(filename = here::here("results","sent_gov_int.png"), width = 1200, height = 700, res = 144)
+covid %>%
+  mutate(StringencyIndex = scale(StringencyIndex),
+         sent = scale(lag(sent))) %>%
+  ggplot() +
+  xlim(-1.5,1.5) +
+  ylim(-1.5,1.5) +
+  #geom_point(aes(x = sent, y = StringencyIndex), color = "#29AF7FFF") +
+  geom_smooth(aes(x = sent, y = StringencyIndex, color = iso3c), method = "lm", se = F) +
+  geom_smooth(aes(x = sent, y = StringencyIndex), method = "lm", se = F, color = "black") +
+  stat_cor(aes(x = sent, y = StringencyIndex), method = "pearson", label.x = -1.4, label.y = -1.5, color = "black", hjust = 0) +
+  annotate(geom = "text", x = -1.4, y = -1.35, label = "Grand Mean Correlation", hjust = 0) +
+  xlab("Media Sentiment (t-1)") +
+  ylab("Government Intervention (t)") +
+  labs(caption = "Sources: RavenPack, Oxford/Blavatnik") +
+  theme_classic() +
+  theme(
+    legend.position = "none"
+  )
+dev.off()
+
+knitr::include_graphics(here::here("results","sent_gov_int.png"))
+```

@@ -1,0 +1,189 @@
+---
+title: "Data Preparation"
+author: "Nate Breznau"
+date: "6/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+pacman::p_load("tidyverse", "countrycode", "zoo", "ggplot2")
+```
+
+
+### Load Data
+
+Data files were worked up from raw data in the folder "data/data_prep_routines".
+
+```{r files, warning = F, message = F}
+
+deaths <- read_csv(here::here("data","deaths_long.csv"))
+geip <- read_csv(here::here("data","geip_ilo.csv"))
+gov_int <- read_csv(here::here("data","gov_int_blavatnik.csv"))
+hours_lost <- read_csv(here::here("data","hours_lost_ilo.csv"))
+polity2 <- read_csv(here::here("data","polity2.csv"))
+sentiment <- read_csv(here::here("data","sentiment_rp.csv"))
+socx_owd <- read_csv(here::here("data","socx_owd.csv"))
+wdi <- read_csv(here::here("data","wdi.csv"))
+fiw <- read_csv(here::here("data","fiw.csv"))
+cis <- read_csv(here::here("data","cis.csv"))
+gbp <- read_csv(here::here("data","gbp.csv"))
+gini <- read_csv(here::here("data","gini_solt.csv"))
+
+```
+
+### Merge Data
+
+```{r merge, warning = F, message = F}
+covid <- full_join(deaths, gov_int, by = c("iso3c","day"))
+covid <- full_join(covid, sentiment, by = c("iso3c","day"))
+covid <- covid %>%
+  left_join(cis, by = c("iso3c","day")) %>%
+  left_join(gbp, by = c("iso3c","day")) %>%
+  left_join(geip, by = c("iso3c")) %>%
+  left_join(hours_lost, by = c("iso3c")) %>%
+  left_join(polity2, by = c("iso3c")) %>%
+  left_join(wdi, by = c("iso3c")) %>%
+  left_join(socx_owd, by = c("iso3c")) %>%
+  left_join(fiw, by = c("iso3c")) %>%
+  left_join(gini, by = c("iso3c"))
+
+
+# country name column
+covid <- covid %>%
+  mutate(country = countrycode(iso3c, "iso3c", "country.name")) %>%
+  select(iso3c, country, everything())
+```
+
+### Interpolate
+
+Where possible
+
+Additions:
+(Guesstimation)
+1. Polity2 
+ABW, PRI, BMU, FRO, GUM & VIR = 7 (independent democracies, technical ownership from other country); VAT = 10
+2. Employment Protection Coverage (lfcov)
+QAT, ARE = 55; IRQ, AFG, BIH, MKD, SRB, MNE = 45; PSE, MNG, TJK, MOZ, KHM = 20; SOM, ERI, TLS, SSD, TON = 3; MDV, COM, GUM, PRI, VUT, VIR, ABW, BMU, MHL, ATG, GRL = 65
+('Google'/Wikipedia)
+2. GDP 
+SOM = 150; SYR = 2000
+3. Unemp
+AND, LIE = 4; DMA, FRO, KNA, ATG = 7
+4. Fertility
+DMA, KNA = 1.9; MCO = 1.5
+
+```{r interp, message = F, warning = F}
+
+# replace missing polity2 with fiw
+# update GDP
+# combine national and ILO unemployment scores, then update
+covid <- covid %>%
+  mutate(polity2_i = ifelse(!is.na(polity2), polity2, fiw),
+         polity2_i = ifelse(iso3c %in% c("ABW", "PRI", "BMU", "FRO", "GUM", "VIR"), 7, 
+                            ifelse(iso3c == "VAT", 10, polity2_i)),
+         gdp_cap = ifelse(iso3c == "SOM", 150,
+                   ifelse(iso3c == "SYR", 2000, gdp_cap)),
+         unemp_i = ifelse(!is.na(unemp_nat), unemp_nat, unemp_ilo),
+         unemp_i = ifelse(iso3c %in% c("AND", "LIE"), 4,
+                   ifelse(iso3c %in% c("DMA", "FRO", "KNA", "ATG"), 7, unemp_i)),
+         fertility_i = ifelse(!is.na(fertility), fertility, 
+                       ifelse(iso3c %in% c("DMA","KNA"), 1.9, 
+                       ifelse(iso3c == "MCO", 1.5, NA))),
+         lfcov_i = ifelse(!is.na(lfcov), lfcov, 
+                          ifelse(iso3c %in% c("QAT", "ARE"), 55,
+                          ifelse(iso3c %in% c("IRQ", "AFG", "BIH", "MKD", "SRB", "MNE"), 45,
+                          ifelse(iso3c %in% c("PSE", "MNG", "TJK", "MOZ", "KHM", "FSM", "GNB", "SUR"), 20,
+                          ifelse(iso3c %in% c("SOM", "ERI", "TLS", "SSD", "TON"), 3,
+                          ifelse(iso3c %in% c("MDV", "COM", "GUM", "PRI", "VUT", "VIR", 
+                                              "ABW", "BMU", "MHL", "ATG", "GRL", "AND", "FRO"), 65, NA)))))),
+         deaths = ifelse(is.na(deaths) & day < as.Date("2020-02-28"), 0, deaths),
+         cases = ifelse(is.na(cases) & day < as.Date("2020-02-28"), 0, cases))
+
+# find missing country-data
+missing <- covid %>%
+  group_by(iso3c) %>%
+  summarise_all(mean) %>%
+  mutate(country = countrycode(iso3c, "iso3c", "country.name")) %>%
+  select(-c(day:H8_elderly_protection))
+
+# fill in socx with prediction from GDP cap and lfcov
+m_socx <- lm(socx_owd ~ log(gdp_cap) + lfcov_i, data = missing)
+missing$socx_p <- predict(m_socx, newdata = missing)
+
+missing <- missing %>%
+  mutate(socx_owd = ifelse(!is.na(socx_owd), socx_owd, socx_p),
+         gov_prot = scale(socx_owd*lfcov_i)) %>% # make social protection scale 
+  select(iso3c, gov_prot, socx_p)
+
+covid <- covid %>%
+  left_join(missing, by = c("iso3c"))
+
+
+```
+
+
+### Infection Rate + Data Transformations
+
+Calculated as deaths per capita with an 18-day lag, adjusted for age structure from:
+
+O’Driscoll, Megan et al. 2021. “Age-Specific Mortality and Immunity Patterns of SARS-CoV-2.” Nature 590(7844): 140–45.
+
+The average below 65 is roughly 0.05% and the average for above 65 is roughly 2.5%. They find that under 65, the cross-country comparability in IFR is very reliable. This means over 65 deaths are 50:1. This means that the deaths need to be adjusted for 50/1 * ratio of over 65 to not.
+
+```{r ifr, message = F, warning = F}
+# the behaviors and concerns data do not perfectly match, this designs a value to capture the behaviros in the past 7 days prior to the first concerns data observation to allow for a scatterplot of many more countries
+covid_x <- covid %>%
+  subset(day < as.Date("2020-03-31") & day > as.Date("2020-03-23")) %>%
+  group_by(iso3c) %>%
+  arrange(day) %>%
+  summarise(behave_fill = mean(behave, na.rm = T)) %>%
+  mutate(day = as.Date("2020-03-31")) %>%
+  subset(behave_fill!= "NaN")
+
+covid <- covid %>%
+  left_join(covid_x, by = c("iso3c","day"))
+
+covid <- covid %>%
+  group_by(iso3c) %>%
+  arrange(day) %>%
+  mutate(deaths_day = deaths - lag(deaths),
+         deaths_day_6roll = zoo::rollmean(deaths_day, k = 6, fill = NA), # 6 day rolling average means that every estimate includes one Sunday (the day reporting causes variation)
+         deaths_6roll = zoo::rollmean(deaths, k = 6, fill = NA),
+         death_lag18 = lead(deaths_6roll, n = 18), 
+         death_day_lag18 = lead(deaths_day_6roll, n = 18),
+         deaths_young = deaths*((1/50)*((100-pop65)/100)),
+         deaths_day_young = deaths_day_6roll*((1/50)*((100-pop65)/100)),
+         deaths_old = deaths*((49/50)*(pop65/100)),
+         deaths_day_old = deaths_day_6roll*((49/50)*(pop65/100)),
+         infection_young = deaths_young*(100/.05), # young infection rate = IFR * young deaths
+         infection_day_young = deaths_day_young*(100/.05),
+         infection_old = deaths_old*(100/2.5), # old infection rate = IFR * old deaths
+         infection_day_old = deaths_day_old*(100/2.5),
+         infection_total = infection_young + infection_old,
+         infection_day = infection_day_young + infection_day_old,
+         infection_pc = (infection_total/pop)*10000, # infections per day 10,000
+         infection_pc_3roll = zoo::rollmean(infection_pc, k = 5, fill = NA),
+         infection_pc18 = lead(infection_pc_3roll, n = 18),
+         infection_day_pc = (infection_day/pop)*10000, # infections per day 10,000
+         infection_day_pc_3roll = zoo::rollmean(infection_day_pc, k = 5, fill = NA),
+         infection_day_pc18 = lead(infection_day_pc_3roll, n = 18),
+         deaths_pc = (deaths/pop)*10000, # deaths per 10,000
+         region = countrycode(iso3c, "iso3c","un.region.name"),
+         subregion = countrycode(iso3c, "iso3c", "un.regionsub.name"),
+         infection_day_delta = infection_day_pc18 - lag(infection_day_pc18),
+         infection_week_delta = (infection_day_pc18 + lag(infection_day_pc18) + lag(infection_day_pc18, 2) + lag(infection_day_pc18, 3))/4 - (lag(infection_day_pc18,6) + lag(infection_day_pc18,7) + lag(infection_day_pc18, 8) + lag(infection_day_pc18, 9))/4, # 'weekly' change in infection rate (actually 4 days)
+         cases_pc = (cases/pop)*10000, # confirmed cases per 10000
+         cases_week = zoo::rollmean(cases_pc - lag(cases_pc, 7), k = 4, fill = NA),
+         cases_week_delta = zoo::rollmean((cases_week - lag(cases_week, 5)), k = 4, fill = NA),
+         behave_3roll = zoo::rollmean(behave, k = 3, fill = NA), # to help fill in some missing days and smooth
+         behave_3roll_prefill = ifelse(day == as.Date("2020-03-31") & is.na(behave_3roll), behave_fill, behave_3roll),
+         iso_period = ifelse(!is.na(period), paste0(iso3c,period), NA)) %>% #set up period counter
+  select(iso3c, day, deaths, deaths_day:cases_week_delta, pop, everything(), -behave_fill)
+```
+
+
+
+```{r out}
+saveRDS(covid, here::here("data","covid.RDS"))
+```
