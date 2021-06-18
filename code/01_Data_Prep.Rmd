@@ -13,7 +13,7 @@ pacman::p_load("tidyverse", "countrycode", "zoo", "ggplot2")
 
 ### Load Data
 
-Data files were worked up from raw data in the folder "data/data_prep_routines".
+Data files were worked up from raw data in the folder "data/data_prep_routines". There are many more data files here than used in the blog post in case users are interested.
 
 ```{r files, warning = F, message = F}
 
