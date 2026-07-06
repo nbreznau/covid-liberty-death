@@ -1,4 +1,4 @@
-## "Public Opinion, Pandemic Infection and Policymaking"
+## "Media Plus Pandemic (MPP) Data"
 
 ### Nate Breznau
 #### German Institute for Adult Education - Leibniz Centre for Lifelong Learning
