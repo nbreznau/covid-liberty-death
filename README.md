@@ -1,7 +1,8 @@
-## "Public Opinion, Pandemic Infection and Policymaking: The COVID-19 Story of Liberty and Death"
+## "Public Opinion, Pandemic Infection and Policymaking"
 
 ### Nate Breznau
-#### University of Bremen, breznau.nate@gmail.com
+#### German Institute for Adult Education - Leibniz Centre for Lifelong Learning
+breznau.nate@gmail.com
 
 *Main command files:*
 
@@ -9,7 +10,7 @@
 
 [02_Plots_Maps.Rmd](/code/02_Plots_Maps.Rmd) - generating the figures
 
-*The data used in the blog post:*
+*The data used for this dataset*
 
 |Indicator|Source|
 |-----|--------|

@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 pacman::p_load("tidyverse", "countrycode", "zoo", "ggplot2", 
-               "rnaturalearth", "sf", "ragg", "ggpubr")
+               "rnaturalearth", "sf", "ragg", "ggpubr", "ggrepel")
 ```
 
 
@@ -20,6 +20,11 @@ Data files were worked up from raw data in the folder "data/data_prep_routines".
 ```{r files, warning = F, message = F}
 
 covid <- readRDS(here::here("data","covid.RDS"))
+
+# write a .csv for public sharing
+covid_mat <- as.data.frame(covid) %>%
+  mutate(across(where(is.matrix), as.numeric))
+write_csv(covid_mat, here::here("data","covid.csv"))
 
 ```
 
@@ -306,13 +311,36 @@ knitr::include_graphics(here::here("results","usa_gov_infect.png"))
 
 ### Behaviors
 
+#### Prep
+
+```{r}
+# 1. Prepare data and remove NAs at the country-time level
+covid <- covid %>%
+  mutate(
+    # Wrapping in as.numeric() strips away the matrix class and attributes
+    behave_3roll_prefill = as.numeric(scale(behave_3roll_prefill)),
+    sent = as.numeric(scale(zoo::rollmean(lag(sent, 3), k = 5, fill = NA)))
+  ) 
+
+df_clean <- covid %>%
+  filter(!is.na(behave_3roll_prefill) & !is.na(sent)) 
+
+
+df_country_means <- df_clean %>%
+  group_by(iso3c) %>%
+  summarize(
+    mean_sent = mean(sent),
+    mean_behave = mean(behave_3roll_prefill),
+    .groups = "drop"
+  )
+
+```
+
 #### Testing Association of Sentiment and Behaviors
 
 ```{r plot_sent1}
 agg_png(filename = here::here("results","sent1_risk_behave.png"), width = 700, height = 500, res = 144)
-covid %>%
-  mutate(behave_3roll_prefill = scale(behave_3roll_prefill),
-         sent = scale(zoo::rollmean(lag(sent, 3), k = 5, fill = NA))) %>%
+p1 <- covid %>%
   ggplot() +
   xlim(-1.5,1.15) +
   ylim(-1.5,1.5) +
@@ -324,9 +352,100 @@ covid %>%
   ylab("Precautionary Behaviors") +
   labs(caption = "Sources: RavenPack, Fetzer et al 2020") +
   theme_classic()
+
+p1
+
 dev.off()
 
 knitr::include_graphics(here::here("results","sent1_risk_behave.png"))
+```
+
+### Figure 2. Country-Level Aggregated Association of Sentiment and Behaviors
+
+```{r}
+### Country-Level Aggregated Association of Sentiment and Behaviors (Clean Variant)
+
+
+agg_png(filename = here::here("results", "Fig_2.png"), width = 700, height = 500, res = 144)
+
+p2 <- df_country_means %>%
+  ggplot(aes(x = mean_sent, y = mean_behave)) +
+  xlim(-1.5, 1.2) +
+  ylim(-1.5, 1.5) +
+  # Replaced geom_text with geom_text_repel to automatically dodge overlaps
+  ggrepel::geom_text_repel(
+    aes(label = iso3c), 
+    color = "#453781FF", 
+    fontface = "bold", 
+    size = 3,
+    max.overlaps = Inf,     
+    box.padding = 0.35,       
+    point.padding = 0.2,      
+    segment.color = 'grey80', 
+    segment.size = 0.3
+  ) +
+  geom_smooth(method = "lm", se = TRUE, color = "#453781FF", fill = "grey85", alpha = 0.5) +
+  xlab("Media Sentiment") +
+  ylab("Precautionary Behaviors") +
+  theme_classic()
+
+# create second unused plot for reporting stat_cor
+p2nouse <- df_country_means %>%
+  ggplot(aes(x = mean_sent, y = mean_behave)) +
+  xlim(-1.5, 1.2) +
+  ylim(-1.5, 1.5) +
+  stat_cor(method = "pearson", label.x = 0.5, label.y = 0.85, color = "#453781FF", hjust = 0, p.accuracy = 0.001)
+
+p2
+
+dev.off()
+
+knitr::include_graphics(here::here("results", "Fig_2.png"))
+```
+
+#### Correlations
+
+##### Country-time points
+
+```{r}
+# Chunk 2: Extract the exact stats calculated by stat_cor for your paper
+plot_data <- ggplot_build(p1)$data
+
+# stat_cor is typically the 3rd layer (geom_point = 1, geom_smooth = 2, stat_cor = 3)
+# Let's pull the underlying label or values from that layer data frame
+stat_layer <- plot_data[[3]]
+
+# Print the internal metrics to your console/markdown report
+cat("--- Extracted from Plot Layer ---\n")
+cat("Text Label:", stat_layer$label[1], "\n")
+cat("Extracted R:", round(stat_layer$r[1], 4), "\n")
+cat("Extracted p-value:", stat_layer$p.value[1], "\n")
+cat("Valid Cases N:", nrow(df_clean), "\n")
+```
+
+##### Country means
+
+```{r}
+# 1. Safely build the plot data list
+plot_data <- ggplot_build(p2nouse)$data
+
+# 2. Automatically grab whichever layer contains the stat_cor calculations
+stat_layer <- NULL
+for (layer in plot_data) {
+  if ("label" %in% names(layer)) {
+    stat_layer <- layer
+    break
+  }
+}
+
+# 3. Pull the metric safely
+if (!is.null(stat_layer)) {
+  raw_label <- stat_layer$label[1]
+  cat("Success! Extracted String:", raw_label, "\n")
+  cat("Valid Cases N:", nrow(df_country_means), "\n")
+} else {
+  cat("Could not find a layer containing text labels.\n")
+}
 ```
 
 #### Testing Association of Sentiment and Gov Intervention
@@ -355,3 +474,83 @@ dev.off()
 
 knitr::include_graphics(here::here("results","sent_gov_int.png"))
 ```
+
+### Figure 3. Map of Media Data Coverage
+
+```{r}
+
+covid_missingness <- covid %>%
+  group_by(iso3c) %>%
+  summarize(
+    has_sent    = any(!is.na(sent)),
+    has_deaths  = any(!is.na(deaths_pc)),
+    has_gov     = any(!is.na(GovernmentResponseIndex)),
+    has_behave  = any(!is.na(behave_3roll_prefill)),
+    .groups = "drop"
+  ) %>%
+  # Count how many of the other 3 variables are non-missing
+  mutate(
+    other_count = has_deaths + has_gov + has_behave,
+    data_category = case_when(
+      # Explicitly catch countries that lack baseline sentiment or other metrics
+      has_sent == FALSE | other_count == 0 ~ "1 Indicator or less",
+      other_count == 1 ~ "2 Indicators",
+      other_count == 2 ~ "3 Indicators",
+      other_count == 3 ~ "All 4 Data Sources",
+      TRUE ~ "1 Indicator or less"
+    )
+  ) %>%
+  # Order the factor so "1 Indicator or less" maps nicely to the scale
+  mutate(data_category = factor(data_category, levels = c(
+    "1 Indicator or less",
+    "2 Indicators", 
+    "3 Indicators", 
+    "All 4 Data Sources"
+  )))
+
+world_map <- ne_countries(returnclass = "sf") %>%
+  st_transform("+proj=eqearth") %>%
+  mutate(iso3c = iso_a3) %>%
+  subset(iso3c != "ATA", select = c(iso3c, geometry))
+
+# Left join keeps all countries from the map; unmatched ones default to "1 Indicator or less"
+map_data <- left_join(world_map, covid_missingness, by = "iso3c") %>%
+  mutate(data_category = replace_na(data_category, "1 Indicator or less"))
+
+agg_png(filename = here::here("results", "Fig_3.png"), width = 1000, height = 800, res = 144)
+
+map_data %>%
+  ggplot(aes(fill = data_category)) +
+  geom_sf(size = 0.15, colour = "black") +
+  scale_fill_viridis_d(
+    name = "Data Availability Level",
+    direction = -1, 
+    na.translate = FALSE, # Prevents a redundant 'NA' category box from appearing
+    drop = FALSE
+  ) +
+  lims(x = c(-10100000, 14000000)) +
+  coord_sf(label_axes = "----") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(size = 10, face = "bold"),
+    legend.text = element_text(size = 9)
+  )
+
+dev.off()
+
+knitr::include_graphics(here::here("results", "Fig_3.png"))
+```
+#### Counts
+
+```{r}
+
+all_four <- sum(covid_missingness$data_category == "All 4 Data Sources")
+at_least_three <- sum(covid_missingness$data_category %in% c("3 Indicators", "All 4 Data Sources"))
+
+cat("Countries with All 4 Data Sources: ", all_four, "\n")
+cat("Countries with At Least 3 Indicators:", at_least_three, "\n")
+
+```
+
